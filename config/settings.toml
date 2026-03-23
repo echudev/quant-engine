@@ -1,0 +1,84 @@
+# ===================================================================
+#  CONFIGURACIÓN CENTRAL — Liquidity Sweep Engine
+# ===================================================================
+
+[global]
+timeframe       = "1h"
+tf_trend        = "1d"
+since_date      = "2023-01-01"
+since_date_trend= "2021-01-01"   # historia extra para MA200 diaria
+since_date_deriv= "2022-06-01"   # desde cuándo bajar OI y funding rate
+exchange_id     = "binance"
+init_cash       = 10_000
+
+# ── Símbolos a operar
+# ccxt_symbol   : formato para OHLCV (Binance)
+# bybit_symbol  : formato para OI (Bybit v5)
+# binance_symbol: formato para funding rate (Binance Futures)
+[[symbols]]
+name           = "BTC"
+ccxt_symbol    = "BTC/USDT"
+bybit_symbol   = "BTCUSDT"
+binance_symbol = "BTCUSDT"
+enabled        = true
+
+[[symbols]]
+name           = "ETH"
+ccxt_symbol    = "ETH/USDT"
+bybit_symbol   = "ETHUSDT"
+binance_symbol = "ETHUSDT"
+enabled        = true
+
+[[symbols]]
+name           = "SOL"
+ccxt_symbol    = "SOL/USDT"
+bybit_symbol   = "SOLUSDT"
+binance_symbol = "SOLUSDT"
+enabled        = true
+
+[[symbols]]
+name           = "BNB"
+ccxt_symbol    = "BNB/USDT"
+bybit_symbol   = "BNBUSDT"
+binance_symbol = "BNBUSDT"
+enabled        = true
+
+# ── Parámetros: Liquidity Sweep OI [Perfil A — BTC óptimo]
+# Cada símbolo puede tener sus propios parámetros.
+# Si no se especifica, usa los defaults de [strategy.liquidity_sweep]
+[strategy.liquidity_sweep]
+oi_drop_pct  = 4.0      # caída mínima de OI acumulada en ventana (%)
+oi_window    = 3        # velas para acumular la caída
+funding_min  = 0.00005  # funding rate mínimo previo
+confirm_body = 0.2      # cuerpo mínimo vela confirmadora (%)
+take_profit  = 6.0      # TP en % del precio de entrada
+atr_mult     = 3.0      # SL = atr_mult × ATR(atr_period)
+atr_period   = 14
+ma_trend_1h  = 50       # MA para filtro de tendencia en 1H
+ma_trend_1d  = 50       # MA para filtro de tendencia diaria
+
+# Override por símbolo (más volátiles necesitan umbrales distintos)
+[strategy.liquidity_sweep.SOL]
+oi_drop_pct  = 5.0      # SOL es más volátil, exigir más caída
+atr_mult     = 2.5
+take_profit  = 5.0
+
+[strategy.liquidity_sweep.BNB]
+oi_drop_pct  = 3.5
+funding_min  = 0.00003
+
+# ── Parámetros: RSI Mean Reversion
+[strategy.rsi_reversion]
+rsi_period   = 14
+oversold     = 35
+exit_level   = 55
+ma_trend     = 200
+take_profit  = 4.0
+atr_mult     = 2.0
+atr_period   = 14
+
+# ── Grid search
+[optimization]
+min_trades   = 20
+max_drawdown = -30.0    # descartar si DD peor que esto
+min_win_rate = 45.0

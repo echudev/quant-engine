@@ -1,0 +1,17 @@
+[project]
+name = "liquiditysweep-engine"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "ccxt>=4.5.44",
+    "matplotlib>=3.10.8",
+    "numpy>=2.4.3",
+    "pandas>=3.0.1",
+    "pyarrow>=23.0.1",
+    "python-dateutil>=2.9.0.post0",
+    "python-dotenv>=1.2.2",
+    "requests>=2.32.5",
+    "vectorbt>=0.28.2",
+]
