@@ -1,5 +1,5 @@
 """
-Liquidity Sweep Engine — main entry point.
+Quant Engine — main entry point.
 
 Runs Liquidity Sweep OI strategy across multiple symbols.
 Config: config/settings.toml
