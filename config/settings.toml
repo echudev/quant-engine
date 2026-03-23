@@ -43,6 +43,13 @@ bybit_symbol   = "BNBUSDT"
 binance_symbol = "BNBUSDT"
 enabled        = true
 
+[[symbols]]
+name           = "TRX"
+ccxt_symbol    = "TRX/USDT"
+bybit_symbol   = "TRXUSDT"
+binance_symbol = "TRXUSDT"
+enabled        = true
+
 # ── Parámetros: Liquidity Sweep OI [Perfil A — BTC óptimo]
 # Cada símbolo puede tener sus propios parámetros.
 # Si no se especifica, usa los defaults de [strategy.liquidity_sweep]
@@ -65,6 +72,14 @@ take_profit  = 5.0
 
 [strategy.liquidity_sweep.BNB]
 oi_drop_pct  = 3.5
+funding_min  = 0.00003
+
+# TRX: slow accumulation + sharp pumps → lower OI threshold, tighter ATR
+# Pattern: gradual OI buildup then sudden flush before next leg up
+[strategy.liquidity_sweep.TRX]
+oi_drop_pct  = 3.0
+atr_mult     = 2.0
+take_profit  = 5.0
 funding_min  = 0.00003
 
 # ── Parámetros: RSI Mean Reversion
