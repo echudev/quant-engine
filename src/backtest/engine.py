@@ -1,6 +1,7 @@
 """
 Backtest engine.
-Runs vectorbt backtests and walk-forward validation.
+Runs vectorbt backtests, grid search optimization, and walk-forward validation.
+Grid search and walk-forward inner loops are parallelized with joblib.
 """
 
 import pandas as pd
@@ -8,27 +9,30 @@ import numpy as np
 import vectorbt as vbt
 import itertools
 from typing import Optional
+from joblib import Parallel, delayed, cpu_count
 from ..strategies.base import BaseStrategy, StrategyParams
 
+
+# ──────────────────────────────────────────────────────────────────
+#  CORE BACKTEST
+# ──────────────────────────────────────────────────────────────────
 
 def run_backtest(
     df: pd.DataFrame,
     strategy: BaseStrategy,
     init_cash: float = 10_000,
-    fees: float = 0.001,
-    timeframe: str = "1h",
+    fees: float      = 0.001,
+    timeframe: str   = "1h",
 ) -> vbt.Portfolio:
     """
-    Run a single backtest for a strategy on a prepared DataFrame.
-
-    df must already have 'entry', 'atr_sl' columns from strategy.prepare().
+    Run a single backtest for a prepared DataFrame.
+    df must already have 'entry' and 'atr_sl' columns from strategy.prepare().
     """
     exits = (
         df[strategy.exit_column]
         if strategy.exit_column and strategy.exit_column in df.columns
         else pd.Series(False, index=df.index)
     )
-
     return vbt.Portfolio.from_signals(
         close     = df["close"],
         entries   = df["entry"],
@@ -55,6 +59,208 @@ def extract_metrics(portfolio: vbt.Portfolio) -> dict:
     }
 
 
+# ──────────────────────────────────────────────────────────────────
+#  GRID SEARCH — parallelized with joblib
+# ──────────────────────────────────────────────────────────────────
+
+def _eval_combo(
+    combo: tuple,
+    keys: list,
+    base_params: StrategyParams,
+    strategy_class: type,
+    df: pd.DataFrame,
+    min_trades: int,
+    min_wr: float,
+    max_dd: float,
+    init_cash: float,
+    timeframe: str,
+) -> Optional[dict]:
+    """
+    Evaluate a single parameter combination.
+    Returns a result dict or None if it doesn't pass filters.
+    Designed to run in parallel — no shared mutable state.
+    """
+    overrides   = dict(zip(keys, combo))
+    params_dict = {**vars(base_params), **overrides}
+    params      = base_params.__class__(**params_dict)
+    strategy    = strategy_class(params)
+    df_sig      = strategy.prepare(df)
+
+    if df_sig["entry"].sum() < min_trades:
+        return None
+
+    try:
+        pf     = run_backtest(df_sig, strategy, init_cash, timeframe=timeframe)
+        stats  = pf.stats()
+        trades = stats.get("Total Trades", 0)
+        wr     = stats.get("Win Rate [%]", 0)
+        dd     = pf.max_drawdown() * 100
+
+        if trades < min_trades or dd < max_dd or wr < min_wr:
+            return None
+
+        return {
+            **overrides,
+            "trades":   trades,
+            "win_rate": round(wr, 1),
+            "sharpe":   round(pf.sharpe_ratio(), 3),
+            "return_%": round(pf.total_return() * 100, 2),
+            "max_dd_%": round(dd, 2),
+            "pf":       round(stats.get("Profit Factor", 0), 2),
+        }
+    except Exception:
+        return None
+
+
+def optimize_strategy(
+    df: pd.DataFrame,
+    strategy_class: type,
+    base_params: StrategyParams,
+    param_grid: dict,
+    min_trades: int  = 20,
+    min_wr: float    = 45.0,
+    max_dd: float    = -30.0,
+    init_cash: float = 10_000,
+    timeframe: str   = "1h",
+    top_n: int       = 10,
+    n_jobs: int      = -1,
+) -> pd.DataFrame:
+    """
+    Parallelized grid search for any strategy.
+
+    Parameters
+    ----------
+    df             : prepared DataFrame (with trend_daily, oi, etc.)
+    strategy_class : uninstantiated strategy class
+    base_params    : default params object used as base for overrides
+    param_grid     : {param_name: [values]} — all combinations are tested
+    min_trades     : discard combos with fewer trades than this
+    min_wr         : discard combos with win rate below this (%)
+    max_dd         : discard combos with drawdown worse than this (%)
+    top_n          : number of top results to print
+    n_jobs         : parallel workers (-1 = all CPU cores)
+    """
+    keys   = list(param_grid.keys())
+    values = list(param_grid.values())
+    combos = list(itertools.product(*values))
+    cores  = cpu_count() if n_jobs == -1 else n_jobs
+
+    print(f"  [OPT] {len(combos)} combinations on {cores} cores "
+          f"(min {min_trades} trades, WR>{min_wr}%, DD>{max_dd}%)...")
+
+    raw = Parallel(n_jobs=n_jobs, prefer="threads")(
+        delayed(_eval_combo)(
+            combo, keys, base_params, strategy_class,
+            df, min_trades, min_wr, max_dd, init_cash, timeframe,
+        )
+        for combo in combos
+    )
+
+    results = [r for r in raw if r is not None]
+
+    if not results:
+        print(f"  [OPT] No combinations passed quality filters.")
+        return pd.DataFrame()
+
+    df_res = pd.DataFrame(results).sort_values("sharpe", ascending=False)
+    print(f"  [OPT] {len(results)} valid combinations. Top {top_n}:")
+    print(df_res.head(top_n).to_string(index=False))
+    return df_res
+
+
+# ──────────────────────────────────────────────────────────────────
+#  WALK-FORWARD VALIDATION — parallelized inner loop
+# ──────────────────────────────────────────────────────────────────
+
+def _eval_window(
+    window_n: int,
+    cursor,
+    train_end,
+    test_end,
+    df: pd.DataFrame,
+    strategy_class: type,
+    base_params: StrategyParams,
+    param_grid: dict,
+    min_trades: int,
+    init_cash: float,
+    timeframe: str,
+) -> Optional[dict]:
+    """
+    Evaluate a single walk-forward window.
+    Optimizes on train set, evaluates on test set.
+    Returns result dict or None if no valid params found.
+    """
+    from dateutil.relativedelta import relativedelta
+
+    # Normalize datetimes to UTC. Accepts tz-aware or tz-naive inputs.
+    def _to_utc(ts):
+        t = pd.Timestamp(ts)
+        # pd.Timestamp(..., tz=...) errors if ts already has tzinfo
+        if t.tz is None:
+            return t.tz_localize("UTC")
+        return t.tz_convert("UTC")
+
+    ts_cursor    = _to_utc(cursor)
+    ts_train_end = _to_utc(train_end)
+    ts_test_end  = _to_utc(test_end)
+
+    df_train = df[(df.index >= ts_cursor) & (df.index < ts_train_end)]
+    df_test  = df[(df.index >= ts_train_end) & (df.index < ts_test_end)]
+
+    keys   = list(param_grid.keys())
+    values = list(param_grid.values())
+
+    # ── Optimize on train (sequential inside the window — already parallel at window level)
+    best_sharpe = -np.inf
+    best_params = None
+
+    for combo in itertools.product(*values):
+        overrides   = dict(zip(keys, combo))
+        params_dict = {**vars(base_params), **overrides}
+        params      = base_params.__class__(**params_dict)
+        strategy    = strategy_class(params)
+        df_sig      = strategy.prepare(df_train)
+
+        if df_sig["entry"].sum() < min_trades:
+            continue
+        try:
+            pf  = run_backtest(df_sig, strategy, init_cash, timeframe=timeframe)
+            sh  = pf.sharpe_ratio()
+            dd  = pf.max_drawdown() * 100
+            wr  = pf.stats().get("Win Rate [%]", 0)
+            trades = pf.stats().get("Total Trades", 0)
+
+            if trades < min_trades or dd < -35 or wr < 40:
+                continue
+            if sh > best_sharpe:
+                best_sharpe = sh
+                best_params = params
+        except Exception:
+            continue
+
+    if best_params is None:
+        return None
+
+    # ── Evaluate on test set
+    strategy  = strategy_class(best_params)
+    df_test_p = strategy.prepare(df_test)
+
+    try:
+        pf_test = run_backtest(df_test_p, strategy, init_cash, timeframe=timeframe)
+        m = extract_metrics(pf_test)
+        return {
+            "window":      window_n,
+            "train_start": cursor.date(),
+            "train_end":   train_end.date(),
+            "test_start":  train_end.date(),
+            "test_end":    test_end.date(),
+            "best_params": str({k: getattr(best_params, k) for k in param_grid}),
+            **m,
+        }
+    except Exception:
+        return None
+
+
 def walk_forward(
     df: pd.DataFrame,
     strategy_class: type,
@@ -65,193 +271,77 @@ def walk_forward(
     min_trades: int   = 10,
     init_cash: float  = 10_000,
     timeframe: str    = "1h",
+    n_jobs: int       = -1,
 ) -> pd.DataFrame:
     """
-    Walk-forward validation.
+    Parallelized walk-forward validation.
 
-    Splits the full period into overlapping train/test windows.
+    Splits the full period into rolling train/test windows.
+    Windows are evaluated in parallel (each window on its own core).
     For each window: optimizes params on train, evaluates on test.
-    Returns a DataFrame with out-of-sample results per window.
 
     Parameters
     ----------
-    df              : full prepared DataFrame (with trend_daily, oi columns, etc.)
+    df              : full DataFrame (with trend_daily, oi, etc.)
     strategy_class  : uninstantiated strategy class
-    base_params     : default params (used as base for grid search)
-    param_grid      : dict of {param_name: [values]} to optimize
-    train_months    : months in each training window
-    test_months     : months in each test window
-    min_trades      : minimum trades to consider a result valid
+    base_params     : default params (base for grid overrides)
+    param_grid      : {param_name: [values]} to optimize per window
+    train_months    : size of each training window in months
+    test_months     : size of each test window in months
+    min_trades      : minimum trades per window to be considered valid
+    n_jobs          : parallel workers (-1 = all CPU cores)
     """
     from dateutil.relativedelta import relativedelta
 
     start = df.index[0].to_pydatetime()
     end   = df.index[-1].to_pydatetime()
-    results = []
-    window_n = 0
+    cores = cpu_count() if n_jobs == -1 else n_jobs
 
-    cursor = start
+    # Build list of windows
+    windows = []
+    cursor  = start
+    n       = 0
     while True:
         train_end = cursor + relativedelta(months=train_months)
         test_end  = train_end + relativedelta(months=test_months)
-
         if test_end > end:
             break
-
-        df_train = df[(df.index >= pd.Timestamp(cursor,   tz="UTC")) &
-                      (df.index <  pd.Timestamp(train_end, tz="UTC"))]
-        df_test  = df[(df.index >= pd.Timestamp(train_end, tz="UTC")) &
-                      (df.index <  pd.Timestamp(test_end,  tz="UTC"))]
-
-        window_n += 1
-        print(f"  [WF] Window {window_n}: "
-              f"train {cursor.date()}→{train_end.date()} | "
-              f"test {train_end.date()}→{test_end.date()}")
-
-        # ── Optimize on train set
-        best_sharpe = -np.inf
-        best_params = None
-
-        keys   = list(param_grid.keys())
-        values = list(param_grid.values())
-
-        for combo in itertools.product(*values):
-            params_dict = dict(zip(keys, combo))
-            params = base_params.__class__(**{
-                **vars(base_params), **params_dict
-            })
-            strategy = strategy_class(params)
-            df_prepared = strategy.prepare(df_train)
-
-            if df_prepared["entry"].sum() < min_trades:
-                continue
-            try:
-                pf  = run_backtest(df_prepared, strategy, init_cash, timeframe=timeframe)
-                sh  = pf.sharpe_ratio()
-                dd  = pf.max_drawdown() * 100
-                wr  = pf.stats().get("Win Rate [%]", 0)
-                if pf.stats().get("Total Trades", 0) < min_trades:
-                    continue
-                if dd < -35 or wr < 40:
-                    continue
-                if sh > best_sharpe:
-                    best_sharpe = sh
-                    best_params = params
-            except Exception:
-                continue
-
-        if best_params is None:
-            print(f"  [WF] Window {window_n}: no valid params found on train set.")
-            cursor += relativedelta(months=test_months)
-            continue
-
-        # ── Evaluate on test set with best params
-        strategy  = strategy_class(best_params)
-        df_test_p = strategy.prepare(df_test)
-
-        try:
-            pf_test = run_backtest(df_test_p, strategy, init_cash, timeframe=timeframe)
-            m = extract_metrics(pf_test)
-            results.append({
-                "window":       window_n,
-                "train_start":  cursor.date(),
-                "train_end":    train_end.date(),
-                "test_start":   train_end.date(),
-                "test_end":     test_end.date(),
-                "best_params":  str(vars(best_params)),
-                **m,
-            })
-            print(f"  [WF] Window {window_n} test: "
-                  f"ret={m['return_%']:.1f}% sharpe={m['sharpe']:.2f} "
-                  f"trades={m['trades']}")
-        except Exception as e:
-            print(f"  [WF] Window {window_n} test failed: {e}")
-
+        n += 1
+        windows.append((n, cursor, train_end, test_end))
         cursor += relativedelta(months=test_months)
+
+    if not windows:
+        print("  [WF] Not enough data for walk-forward windows.")
+        return pd.DataFrame()
+
+    print(f"  [WF] {len(windows)} windows × "
+          f"(train {train_months}m / test {test_months}m) on {cores} cores...")
+
+    raw = Parallel(n_jobs=n_jobs, prefer="threads")(
+        delayed(_eval_window)(
+            n, cursor, train_end, test_end,
+            df, strategy_class, base_params, param_grid,
+            min_trades, init_cash, timeframe,
+        )
+        for n, cursor, train_end, test_end in windows
+    )
+
+    results = [r for r in raw if r is not None]
 
     if not results:
         print("  [WF] No valid windows found.")
         return pd.DataFrame()
 
-    return pd.DataFrame(results)
+    df_wf = pd.DataFrame(results).sort_values("window")
 
+    print(f"\n  [WF] Results ({len(results)}/{len(windows)} windows valid):")
+    cols = ["window", "test_start", "test_end",
+            "return_%", "sharpe", "max_dd_%", "win_rate_%", "trades"]
+    print(df_wf[cols].to_string(index=False))
 
-def optimize_strategy(
-    df: pd.DataFrame,
-    strategy_class: type,
-    base_params,
-    param_grid: dict,
-    min_trades: int   = 20,
-    min_wr: float     = 45.0,
-    max_dd: float     = -30.0,
-    init_cash: float  = 10_000,
-    timeframe: str    = "1h",
-    top_n: int        = 10,
-) -> pd.DataFrame:
-    """
-    Grid search optimization for any strategy.
+    profitable = (df_wf["return_%"] > 0).sum()
+    print(f"\n  [WF] Summary: {profitable}/{len(df_wf)} profitable windows | "
+          f"avg return {df_wf['return_%'].mean():.1f}% | "
+          f"avg Sharpe {df_wf['sharpe'].mean():.2f}")
 
-    Tries all combinations in param_grid, runs a backtest for each,
-    filters by quality thresholds, returns top_n sorted by Sharpe.
-
-    Parameters
-    ----------
-    df            : prepared DataFrame with trend_daily and derivatives
-    strategy_class: uninstantiated strategy class
-    base_params   : default params object (used as base for overrides)
-    param_grid    : dict of {param_name: [values_to_try]}
-    min_trades    : discard combos with fewer trades
-    min_wr        : discard combos with win rate below this (%)
-    max_dd        : discard combos with drawdown worse than this (%)
-    top_n         : how many results to return
-    """
-    keys   = list(param_grid.keys())
-    values = list(param_grid.values())
-    combos = list(itertools.product(*values))
-
-    print(f"  [OPT] {len(combos)} combinations (min {min_trades} trades, "
-          f"WR>{min_wr}%, DD>{max_dd}%)...")
-
-    results = []
-
-    for combo in combos:
-        overrides   = dict(zip(keys, combo))
-        params_dict = {**vars(base_params), **overrides}
-        params      = base_params.__class__(**params_dict)
-        strategy    = strategy_class(params)
-        df_sig      = strategy.prepare(df)
-
-        if df_sig["entry"].sum() < min_trades:
-            continue
-
-        try:
-            pf     = run_backtest(df_sig, strategy, init_cash, timeframe=timeframe)
-            stats  = pf.stats()
-            trades = stats.get("Total Trades", 0)
-            wr     = stats.get("Win Rate [%]", 0)
-            dd     = pf.max_drawdown() * 100
-
-            if trades < min_trades or dd < max_dd or wr < min_wr:
-                continue
-
-            row = {**overrides}
-            row.update({
-                "trades":    trades,
-                "win_rate":  round(wr, 1),
-                "sharpe":    round(pf.sharpe_ratio(), 3),
-                "return_%":  round(pf.total_return() * 100, 2),
-                "max_dd_%":  round(dd, 2),
-                "pf":        round(stats.get("Profit Factor", 0), 2),
-            })
-            results.append(row)
-        except Exception:
-            continue
-
-    if not results:
-        print(f"  [OPT] No combinations passed quality filters.")
-        return pd.DataFrame()
-
-    df_res = pd.DataFrame(results).sort_values("sharpe", ascending=False)
-    print(f"  [OPT] {len(results)} valid combinations. Top {top_n}:")
-    print(df_res.head(top_n).to_string(index=False))
-    return df_res
+    return df_wf

@@ -1,5 +1,5 @@
 """
-Quant Engine — main entry point.
+Liquidity Sweep Engine — main entry point.
 
 Runs Liquidity Sweep OI strategy across multiple symbols.
 Config: config/settings.toml
@@ -14,7 +14,7 @@ from src.data.fetcher import (
 )
 from src.strategies.liquidity_sweep import LiquiditySweepStrategy, LiquiditySweepParams
 from src.strategies.rsi_reversion import RSIReversionStrategy, RSIReversionParams
-from src.backtest.engine import run_backtest, extract_metrics, optimize_strategy
+from src.backtest.engine import run_backtest, extract_metrics, optimize_strategy, walk_forward
 from src.reporting.metrics import print_report, print_comparison
 from src.reporting.plots import plot_equity_curves, plot_multi_symbol
 
@@ -200,6 +200,35 @@ if __name__ == "__main__":
 
     ls_results = [r for r in all_results if r["name"] == "Liquidity Sweep"]
     plot_multi_symbol(ls_results, output_path=str(PLOTS_DIR / "multi_symbol.png"))
+
+    # ════════════════════════════════════════
+    #  WALK-FORWARD VALIDATION — BTC
+    #  Uncomment to run (~5-10 min depending on cores)
+    # ════════════════════════════════════════
+    WF_PARAM_GRID = {
+        "oi_drop_pct": [2.0, 3.0, 4.0, 5.0],
+        "funding_min": [0.0, 0.00005, 0.0001],
+        "take_profit": [4.0, 5.0, 6.0, 8.0],
+        "atr_mult":    [2.0, 2.5, 3.0],
+    }
+    print("\n── Walk-Forward Validation: Liquidity Sweep [BTC]")
+    wf_results = walk_forward(
+        df          = dfs["BTC"],
+        strategy_class = LiquiditySweepStrategy,
+        base_params    = build_ls_params("BTC"),
+        param_grid     = WF_PARAM_GRID,
+        train_months   = 12,
+        test_months    = 6,
+        min_trades     = 8,
+        init_cash      = INIT_CASH,
+        timeframe      = TIMEFRAME,
+        n_jobs         = -1,
+    )
+    if not wf_results.empty:
+        wf_results.to_csv(
+            RESULTS_DIR / f"walkforward_BTC_{__import__('datetime').datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            index=False
+        )
 
     # ── 9. Persist results to CSV
     import json
