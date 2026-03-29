@@ -64,7 +64,17 @@ atr_period   = 14
 ma_trend_1h  = 50       # MA para filtro de tendencia en 1H
 ma_trend_1d  = 50       # MA para filtro de tendencia diaria
 
-# Override por símbolo (más volátiles necesitan umbrales distintos)
+# Override por símbolo
+# BTC: default params gave only 29 trades (7-10/year) — too few for WF.
+# Lower thresholds to target 15-20 trades/year so WF optimizer has signal.
+# Quality guard: confirm_body kept at 0.3 to avoid pure noise entries.
+[strategy.liquidity_sweep.BTC]
+oi_drop_pct  = 2.5
+funding_min  = 0.00002
+confirm_body = 0.3
+atr_mult     = 3.0
+take_profit  = 6.0
+
 # ETH: 42 trades → 42.9% WR → tighten to reduce noise
 [strategy.liquidity_sweep.ETH]
 oi_drop_pct  = 6.0
@@ -130,6 +140,17 @@ ma_trend_1h        = 50
 ma_trend_1d        = 50
 
 # Per-symbol overrides for Funding Flush
+# BTC: default gave only 22 trades (7/year) — too few for WF.
+# Lower funding_pct_rank to 50 and oi_drop_pct to 1.5 to target 15-20/year.
+# vol_mult lowered to 1.0 (remove volume filter) since BTC already has
+# the cleanest OI signal — volume rarely double-spikes on BTC flushes.
+[strategy.funding_flush.BTC]
+funding_pct_rank = 50.0
+oi_drop_pct      = 1.5
+vol_mult         = 1.0
+take_profit      = 5.0
+atr_mult         = 2.5
+
 # SOL: needs higher funding threshold — its funding is noisier
 [strategy.funding_flush.SOL]
 funding_pct_rank = 70.0

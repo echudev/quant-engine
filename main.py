@@ -223,8 +223,8 @@ if __name__ == "__main__":
     #  min_trades=5: BTC LS is selective (~7-8 trades per 12-month window).
     # ════════════════════════════════════════
     WF_BTC_LS_GRID = {
-        "oi_drop_pct": [3.0, 4.0, 5.0, 6.0, 7.0],
-        "funding_min": [0.00003, 0.00005, 0.0001],
+        "oi_drop_pct": [1.5, 2.0, 2.5, 3.0, 4.0, 5.0],
+        "funding_min": [0.00001, 0.00002, 0.00005, 0.0001],
         "take_profit": [4.0, 6.0, 8.0],
         "atr_mult":    [2.0, 2.5, 3.0, 3.5],
     }
@@ -253,9 +253,9 @@ if __name__ == "__main__":
     #  be the primary BTC strategy (replacing the curve-fitted LS).
     # ════════════════════════════════════════
     WF_BTC_FF_GRID = {
-        "funding_pct_rank": [55.0, 60.0, 65.0, 70.0, 75.0],
-        "oi_drop_pct":      [2.0, 3.0, 4.0, 5.0],
-        "vol_mult":         [1.0, 1.3, 1.5, 2.0],
+        "funding_pct_rank": [40.0, 45.0, 50.0, 55.0, 60.0, 65.0],
+        "oi_drop_pct":      [1.0, 1.5, 2.0, 3.0, 4.0],
+        "vol_mult":         [1.0, 1.3, 1.5],
         "take_profit":      [4.0, 5.0, 6.0, 8.0],
     }
     print("\n── Walk-Forward: Funding Flush [BTC]")
