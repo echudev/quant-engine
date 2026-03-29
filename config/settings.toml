@@ -41,14 +41,14 @@ name           = "BNB"
 ccxt_symbol    = "BNB/USDT"
 bybit_symbol   = "BNBUSDT"
 binance_symbol = "BNBUSDT"
-enabled        = true
+enabled        = false   # no edge found across any strategy
 
 [[symbols]]
 name           = "TRX"
 ccxt_symbol    = "TRX/USDT"
 bybit_symbol   = "TRXUSDT"
 binance_symbol = "TRXUSDT"
-enabled        = true
+enabled        = false   # no edge found across any strategy
 
 # ── Parámetros: Liquidity Sweep OI [Perfil A — BTC óptimo]
 # Cada símbolo puede tener sus propios parámetros.
@@ -138,9 +138,14 @@ vol_mult         = 1.5
 take_profit      = 5.0
 atr_mult         = 2.0
 
-# ETH: slightly tighter to improve quality
+# ETH: grid search optimal (320 combos, 2026-03-29)
+# funding_pct_rank 55 → more signals at same quality (Sharpe 1.52 vs 1.05 default)
+# oi_drop_pct 2.0 → lower bar catches more genuine flushes
+# vol_mult 1.5 → keeps volume filter meaningful
 [strategy.funding_flush.ETH]
-funding_pct_rank = 68.0
+funding_pct_rank = 55.0
+oi_drop_pct      = 2.0
+vol_mult         = 1.5
 take_profit      = 5.0
 
 # BNB: conservative — weak historical edge

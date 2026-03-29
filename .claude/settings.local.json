@@ -4,7 +4,9 @@
       "Bash(find /d/quant-engine -type f -name *.md -o -name *.txt -o -name *.toml -o -name *.json -o -name .cursorrules -o -name *copilot*)",
       "Bash(find /d/quant-engine -type d ! -path */.* ! -path */.venv/* ! -path */.git/*)",
       "Bash(uv run:*)",
-      "Bash(PYTHONIOENCODING=utf-8 uv run main.py)"
+      "Bash(PYTHONIOENCODING=utf-8 uv run main.py)",
+      "Bash(PYTHONIOENCODING=utf-8 uv run python -c \":*)",
+      "Bash(PYTHONIOENCODING=utf-8 PYTHONUNBUFFERED=1 uv run main.py)"
     ]
   }
 }

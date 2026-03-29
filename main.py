@@ -214,72 +214,138 @@ if __name__ == "__main__":
     run_ts = dt.now().strftime("%Y%m%d_%H%M%S")
 
     # ════════════════════════════════════════
-    #  WALK-FORWARD ETH
-    #  ETH tiene 191 trades — mucho más poder estadístico que BTC
+    #  WALK-FORWARD: Liquidity Sweep [BTC]
+    #
+    #  BTC LS params were hand-tuned on the full history ("Perfil A — BTC óptimo").
+    #  With only 29 total trades, in-sample optimization risk is real.
+    #  WF validates that the edge holds across different market regimes,
+    #  not just the 2023-2026 bull run.
+    #  min_trades=5: BTC LS is selective (~7-8 trades per 12-month window).
     # ════════════════════════════════════════
-    WF_ETH_GRID = {
-        "oi_drop_pct": [0.3, 0.5, 0.8, 1.0, 1.5],
-        "funding_min": [0.0, 0.00005, 0.0001],
-        "take_profit": [3.0, 4.0, 5.0, 6.0],
-        "atr_mult":    [1.5, 2.0, 2.5, 3.0],
+    WF_BTC_LS_GRID = {
+        "oi_drop_pct": [3.0, 4.0, 5.0, 6.0, 7.0],
+        "funding_min": [0.00003, 0.00005, 0.0001],
+        "take_profit": [4.0, 6.0, 8.0],
+        "atr_mult":    [2.0, 2.5, 3.0, 3.5],
     }
-    print("\n── Walk-Forward: Liquidity Sweep [ETH]")
-    wf_eth = walk_forward(
+    print("\n── Walk-Forward: Liquidity Sweep [BTC]")
+    wf_btc_ls = walk_forward(
+        df             = dfs["BTC"],
+        strategy_class = LiquiditySweepStrategy,
+        base_params    = build_ls_params("BTC"),
+        param_grid     = WF_BTC_LS_GRID,
+        train_months   = 12,
+        test_months    = 6,
+        min_trades     = 5,
+        init_cash      = INIT_CASH,
+        timeframe      = TIMEFRAME,
+        n_jobs         = -1,
+    )
+    if not wf_btc_ls.empty:
+        wf_btc_ls.to_csv(RESULTS_DIR / f"wf_BTC_LS_{run_ts}.csv", index=False)
+
+    # ════════════════════════════════════════
+    #  WALK-FORWARD: Funding Flush [BTC]
+    #
+    #  BTC FF has 22 trades, Sharpe 1.28 in-sample — but also unvalidated.
+    #  Same concern as LS: params tuned on full history.
+    #  If 3+/4 windows are profitable, the edge is real and BTC FF should
+    #  be the primary BTC strategy (replacing the curve-fitted LS).
+    # ════════════════════════════════════════
+    WF_BTC_FF_GRID = {
+        "funding_pct_rank": [55.0, 60.0, 65.0, 70.0, 75.0],
+        "oi_drop_pct":      [2.0, 3.0, 4.0, 5.0],
+        "vol_mult":         [1.0, 1.3, 1.5, 2.0],
+        "take_profit":      [4.0, 5.0, 6.0, 8.0],
+    }
+    print("\n── Walk-Forward: Funding Flush [BTC]")
+    wf_btc_ff = walk_forward(
+        df             = dfs["BTC"],
+        strategy_class = FundingFlushStrategy,
+        base_params    = build_ff_params("BTC"),
+        param_grid     = WF_BTC_FF_GRID,
+        train_months   = 12,
+        test_months    = 6,
+        min_trades     = 5,
+        init_cash      = INIT_CASH,
+        timeframe      = TIMEFRAME,
+        n_jobs         = -1,
+    )
+    if not wf_btc_ff.empty:
+        wf_btc_ff.to_csv(RESULTS_DIR / f"wf_BTC_FF_{run_ts}.csv", index=False)
+
+    # ════════════════════════════════════════
+    #  GRID SEARCH: Funding Flush [ETH]
+    #
+    #  FF ETH has 35 trades at Sharpe 1.05 with zero optimization.
+    #  Find the best full-history params (use WF below to validate OOS).
+    #  320 combinations: fast on parallel cores.
+    # ════════════════════════════════════════
+    FF_ETH_GRID = {
+        "funding_pct_rank": [55.0, 60.0, 65.0, 70.0, 75.0],
+        "oi_drop_pct":      [2.0, 3.0, 4.0, 5.0],
+        "vol_mult":         [1.0, 1.3, 1.5, 2.0],
+        "take_profit":      [4.0, 5.0, 6.0, 7.0],
+    }
+    print("\n── Grid Search: Funding Flush [ETH]")
+    gs_ff_eth = optimize_strategy(
         df             = dfs["ETH"],
-        strategy_class = LiquiditySweepStrategy,
-        base_params    = build_ls_params("ETH"),
-        param_grid     = WF_ETH_GRID,
-        train_months   = 12,
-        test_months    = 6,
+        strategy_class = FundingFlushStrategy,
+        base_params    = build_ff_params("ETH"),
+        param_grid     = FF_ETH_GRID,
         min_trades     = 15,
+        min_wr         = 50.0,
+        max_dd         = -20.0,
         init_cash      = INIT_CASH,
         timeframe      = TIMEFRAME,
-        n_jobs         = -1,
+        top_n          = 10,
     )
-    if not wf_eth.empty:
-        wf_eth.to_csv(RESULTS_DIR / f"wf_ETH_{run_ts}.csv", index=False)
+    if not gs_ff_eth.empty:
+        gs_ff_eth.to_csv(RESULTS_DIR / f"gs_ff_eth_{run_ts}.csv", index=False)
 
     # ════════════════════════════════════════
-    #  WALK-FORWARD SOL
+    #  WALK-FORWARD: Funding Flush [ETH]
+    #
+    #  Validates FF ETH edge out-of-sample across 4 rolling windows.
+    #  35 trades over 3 years → ~8-9 per 6-month test window.
+    #  Uses same grid as above for inner per-window optimization.
     # ════════════════════════════════════════
-    WF_SOL_GRID = {
-        "oi_drop_pct": [1.5, 2.0, 3.0, 4.0, 5.0],
-        "funding_min": [0.0, 0.00005, 0.0001, 0.0002],
-        "take_profit": [3.0, 4.0, 5.0, 6.0],
-        "atr_mult":    [1.5, 2.0, 2.5, 3.0],
+    WF_FF_ETH_GRID = {
+        "funding_pct_rank": [55.0, 60.0, 65.0, 70.0, 75.0],
+        "oi_drop_pct":      [2.0, 3.0, 4.0, 5.0],
+        "vol_mult":         [1.0, 1.3, 1.5, 2.0],
+        "take_profit":      [4.0, 5.0, 6.0, 7.0],
     }
-    print("\n── Walk-Forward: Liquidity Sweep [SOL]")
-    wf_sol = walk_forward(
-        df             = dfs["SOL"],
-        strategy_class = LiquiditySweepStrategy,
-        base_params    = build_ls_params("SOL"),
-        param_grid     = WF_SOL_GRID,
+    print("\n── Walk-Forward: Funding Flush [ETH]")
+    wf_ff_eth = walk_forward(
+        df             = dfs["ETH"],
+        strategy_class = FundingFlushStrategy,
+        base_params    = build_ff_params("ETH"),
+        param_grid     = WF_FF_ETH_GRID,
         train_months   = 12,
         test_months    = 6,
-        min_trades     = 15,
+        min_trades     = 8,
         init_cash      = INIT_CASH,
         timeframe      = TIMEFRAME,
         n_jobs         = -1,
     )
-    if not wf_sol.empty:
-        wf_sol.to_csv(RESULTS_DIR / f"wf_SOL_{run_ts}.csv", index=False)
+    if not wf_ff_eth.empty:
+        wf_ff_eth.to_csv(RESULTS_DIR / f"wf_FF_ETH_{run_ts}.csv", index=False)
 
     # ════════════════════════════════════════
-    #  PORTFOLIO COMBINADO BTC + ETH + SOL
+    #  PORTFOLIO COMBINADO (all enabled symbols, LS + FF)
     # ════════════════════════════════════════
-    combined_pf  = []
-    combined_lbl = []
-    for sym, pf in zip(["BTC", "ETH", "SOL"], all_pf_ls[:3]):
-        combined_pf.append(pf)
-        combined_lbl.append(f"LS {sym}")
+    sym_names = [s["name"] for s in symbols]
+    combined_pf  = all_pf_ls + all_pf_ff
+    combined_lbl = [f"LS {n}" for n in sym_names] + [f"FF {n}" for n in sym_names]
 
-    if len(combined_pf) == 3:
+    if combined_pf:
         plot_equity_curves(
             portfolios  = combined_pf,
             labels      = combined_lbl,
-            df_price    = dfs["BTC"],
+            df_price    = dfs[sym_names[0]],
             init_cash   = INIT_CASH,
-            title       = f"Portfolio BTC+ETH+SOL  |  {SINCE_DATE} → today",
+            title       = f"Portfolio {'+'.join(sym_names)}  LS+FF  |  {SINCE_DATE} → today",
             output_path = str(PLOTS_DIR / "portfolio_combined.png"),
         )
 
