@@ -174,68 +174,84 @@ if __name__ == "__main__":
     # ── 7. Summary
     print_comparison(all_results)
 
-    # ── 8. Multi-symbol comparison (Liquidity Sweep only)
-    # ════════════════════════════════════════
-    #  GRID SEARCH — per symbol (uncomment to run, takes ~5 min)
-    # ════════════════════════════════════════
-    # LS_PARAM_GRID = {
-    #     "oi_drop_pct":  [0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0],
-    #     "funding_min":  [0.0, 0.00005, 0.0001, 0.0002],
-    #     "take_profit":  [3.0, 4.0, 5.0, 6.0, 8.0],
-    #     "atr_mult":     [1.5, 2.0, 2.5, 3.0],
-    # }
-    # opt_results = {}
-    # for sym in symbols:
-    #     name = sym["name"]
-    #     print(f"\n── Grid Search: Liquidity Sweep [{name}]")
-    #     opt_results[name] = optimize_strategy(
-    #         dfs[name], LiquiditySweepStrategy,
-    #         build_ls_params(name), LS_PARAM_GRID,
-    #     )
-    #     if not opt_results[name].empty:
-    #         ts  = __import__("datetime").datetime.now().strftime("%Y%m%d_%H%M%S")
-    #         opt_results[name].to_csv(
-    #             RESULTS_DIR / f"grid_{name.lower()}_{ts}.csv", index=False
-    #         )
-
     ls_results = [r for r in all_results if r["name"] == "Liquidity Sweep"]
     plot_multi_symbol(ls_results, output_path=str(PLOTS_DIR / "multi_symbol.png"))
 
+    from datetime import datetime as dt
+    run_ts = dt.now().strftime("%Y%m%d_%H%M%S")
+
     # ════════════════════════════════════════
-    #  WALK-FORWARD VALIDATION — BTC
-    #  Uncomment to run (~5-10 min depending on cores)
+    #  WALK-FORWARD ETH
+    #  ETH tiene 191 trades — mucho más poder estadístico que BTC
     # ════════════════════════════════════════
-    WF_PARAM_GRID = {
-        "oi_drop_pct": [2.0, 3.0, 4.0, 5.0],
+    WF_ETH_GRID = {
+        "oi_drop_pct": [0.3, 0.5, 0.8, 1.0, 1.5],
         "funding_min": [0.0, 0.00005, 0.0001],
-        "take_profit": [4.0, 5.0, 6.0, 8.0],
-        "atr_mult":    [2.0, 2.5, 3.0],
+        "take_profit": [3.0, 4.0, 5.0, 6.0],
+        "atr_mult":    [1.5, 2.0, 2.5, 3.0],
     }
-    print("\n── Walk-Forward Validation: Liquidity Sweep [BTC]")
-    wf_results = walk_forward(
-        df          = dfs["BTC"],
+    print("\n── Walk-Forward: Liquidity Sweep [ETH]")
+    wf_eth = walk_forward(
+        df             = dfs["ETH"],
         strategy_class = LiquiditySweepStrategy,
-        base_params    = build_ls_params("BTC"),
-        param_grid     = WF_PARAM_GRID,
+        base_params    = build_ls_params("ETH"),
+        param_grid     = WF_ETH_GRID,
         train_months   = 12,
         test_months    = 6,
-        min_trades     = 8,
+        min_trades     = 15,
         init_cash      = INIT_CASH,
         timeframe      = TIMEFRAME,
         n_jobs         = -1,
     )
-    if not wf_results.empty:
-        wf_results.to_csv(
-            RESULTS_DIR / f"walkforward_BTC_{__import__('datetime').datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-            index=False
+    if not wf_eth.empty:
+        wf_eth.to_csv(RESULTS_DIR / f"wf_ETH_{run_ts}.csv", index=False)
+
+    # ════════════════════════════════════════
+    #  WALK-FORWARD SOL
+    # ════════════════════════════════════════
+    WF_SOL_GRID = {
+        "oi_drop_pct": [1.5, 2.0, 3.0, 4.0, 5.0],
+        "funding_min": [0.0, 0.00005, 0.0001, 0.0002],
+        "take_profit": [3.0, 4.0, 5.0, 6.0],
+        "atr_mult":    [1.5, 2.0, 2.5, 3.0],
+    }
+    print("\n── Walk-Forward: Liquidity Sweep [SOL]")
+    wf_sol = walk_forward(
+        df             = dfs["SOL"],
+        strategy_class = LiquiditySweepStrategy,
+        base_params    = build_ls_params("SOL"),
+        param_grid     = WF_SOL_GRID,
+        train_months   = 12,
+        test_months    = 6,
+        min_trades     = 15,
+        init_cash      = INIT_CASH,
+        timeframe      = TIMEFRAME,
+        n_jobs         = -1,
+    )
+    if not wf_sol.empty:
+        wf_sol.to_csv(RESULTS_DIR / f"wf_SOL_{run_ts}.csv", index=False)
+
+    # ════════════════════════════════════════
+    #  PORTFOLIO COMBINADO BTC + ETH + SOL
+    # ════════════════════════════════════════
+    combined_pf  = []
+    combined_lbl = []
+    for sym, pf in zip(["BTC", "ETH", "SOL"], all_pf_ls[:3]):
+        combined_pf.append(pf)
+        combined_lbl.append(f"LS {sym}")
+
+    if len(combined_pf) == 3:
+        plot_equity_curves(
+            portfolios  = combined_pf,
+            labels      = combined_lbl,
+            df_price    = dfs["BTC"],
+            init_cash   = INIT_CASH,
+            title       = f"Portfolio BTC+ETH+SOL  |  {SINCE_DATE} → today",
+            output_path = str(PLOTS_DIR / "portfolio_combined.png"),
         )
 
-    # ── 9. Persist results to CSV
-    import json
-    from datetime import datetime as dt
-    run_ts  = dt.now().strftime("%Y%m%d_%H%M%S")
+    # ── Persist run summary
     results_df = pd.DataFrame(all_results)
-    csv_path   = RESULTS_DIR / f"run_{run_ts}.csv"
-    results_df.to_csv(csv_path, index=False)
-    print(f"  [RESULTS] Saved: {csv_path}")
+    results_df.to_csv(RESULTS_DIR / f"run_{run_ts}.csv", index=False)
+    print(f"  [RESULTS] Saved: {RESULTS_DIR}/")
     print(f"  [DONE] Plots: {PLOTS_DIR}/  |  Results: {RESULTS_DIR}/")
