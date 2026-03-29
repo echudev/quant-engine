@@ -14,6 +14,7 @@ from src.data.fetcher import (
 )
 from src.strategies.liquidity_sweep import LiquiditySweepStrategy, LiquiditySweepParams
 from src.strategies.rsi_reversion import RSIReversionStrategy, RSIReversionParams
+from src.strategies.funding_flush import FundingFlushStrategy, FundingFlushParams
 from src.backtest.engine import run_backtest, extract_metrics, optimize_strategy, walk_forward
 from src.reporting.metrics import print_report, print_comparison
 from src.reporting.plots import plot_equity_curves, plot_multi_symbol
@@ -40,6 +41,7 @@ EXCHANGE   = GLOBAL["exchange_id"]
 
 LS_CFG  = CFG["strategy"]["liquidity_sweep"]
 RSI_CFG = CFG["strategy"]["rsi_reversion"]
+FF_CFG  = CFG["strategy"]["funding_flush"]
 
 
 def build_ls_params(symbol_name: str) -> LiquiditySweepParams:
@@ -57,6 +59,17 @@ def build_ls_params(symbol_name: str) -> LiquiditySweepParams:
 
 def build_rsi_params() -> RSIReversionParams:
     return RSIReversionParams(**RSI_CFG)
+
+
+def build_ff_params(symbol_name: str) -> FundingFlushParams:
+    """Build FundingFlushParams with per-symbol overrides."""
+    base = {**FF_CFG}
+    for key in list(base.keys()):
+        if isinstance(base[key], dict):
+            base.pop(key)
+    override = FF_CFG.get(symbol_name, {})
+    base.update(override)
+    return FundingFlushParams(**base)
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -90,6 +103,7 @@ if __name__ == "__main__":
     all_results = []
     all_pf_ls   = []
     all_pf_rsi  = []
+    all_pf_ff   = []
     all_labels  = []
 
     dfs = {}  # store prepared DataFrames for grid search
@@ -146,7 +160,7 @@ if __name__ == "__main__":
         print(f"  Return: {r_ls['return_%']:.1f}%  Sharpe: {r_ls['sharpe']:.2f}  "
               f"WR: {r_ls['win_rate_%']:.1f}%  Trades: {r_ls['trades']}")
 
-        # ── 5. RSI Reversion
+        # ── 5. RSI Reversion (v2 — with volume confirmation)
         print(f"\n  ── RSI Mean Reversion [{name}]")
         rsi_params = build_rsi_params()
         rsi_strat  = RSIReversionStrategy(rsi_params)
@@ -161,10 +175,29 @@ if __name__ == "__main__":
         all_results.append(r_rsi)
         all_pf_rsi.append(pf_rsi)
 
-        # ── 6. Per-symbol equity curve
+        print(f"  Return: {r_rsi['return_%']:.1f}%  Sharpe: {r_rsi['sharpe']:.2f}  "
+              f"WR: {r_rsi['win_rate_%']:.1f}%  Trades: {r_rsi['trades']}")
+
+        # ── 6. Funding Flush
+        print(f"\n  ── Funding Rate Flush [{name}]")
+        ff_params = build_ff_params(name)
+        ff_strat  = FundingFlushStrategy(ff_params)
+        df_ff     = ff_strat.prepare(df_bt)
+        print(f"  Signals: {df_ff['entry'].sum()}")
+
+        pf_ff = run_backtest(df_ff, ff_strat, INIT_CASH, timeframe=TIMEFRAME)
+        r_ff  = extract_metrics(pf_ff)
+        r_ff.update({"name": "Funding Flush", "symbol": name})
+        all_results.append(r_ff)
+        all_pf_ff.append(pf_ff)
+
+        print(f"  Return: {r_ff['return_%']:.1f}%  Sharpe: {r_ff['sharpe']:.2f}  "
+              f"WR: {r_ff['win_rate_%']:.1f}%  Trades: {r_ff['trades']}")
+
+        # ── 7. Per-symbol equity curve
         plot_equity_curves(
-            portfolios  = [pf_ls, pf_rsi],
-            labels      = [f"Liquidity Sweep", f"RSI Reversion"],
+            portfolios  = [pf_ls, pf_rsi, pf_ff],
+            labels      = ["Liquidity Sweep", "RSI Reversion", "Funding Flush"],
             df_price    = df_bt,
             init_cash   = INIT_CASH,
             title       = f"Equity Curve — {name} {TIMEFRAME}+{TF_TREND}  |  {SINCE_DATE} → today",

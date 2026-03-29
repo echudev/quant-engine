@@ -65,32 +65,95 @@ ma_trend_1h  = 50       # MA para filtro de tendencia en 1H
 ma_trend_1d  = 50       # MA para filtro de tendencia diaria
 
 # Override por símbolo (más volátiles necesitan umbrales distintos)
-[strategy.liquidity_sweep.SOL]
-oi_drop_pct  = 5.0      # SOL es más volátil, exigir más caída
+# ETH: 42 trades → 42.9% WR → tighten to reduce noise
+[strategy.liquidity_sweep.ETH]
+oi_drop_pct  = 6.0
+funding_min  = 0.0001
+confirm_body = 0.4
 atr_mult     = 2.5
+take_profit  = 6.0
+
+# SOL: 70 trades → 57% WR but near-zero return → much tighter
+[strategy.liquidity_sweep.SOL]
+oi_drop_pct  = 7.0      # SOL OI is very noisy, only take strong drops
+funding_min  = 0.0001
+confirm_body = 0.5
+atr_mult     = 2.0
 take_profit  = 5.0
 
+# BNB: 38.5% WR → highest bar, extremely selective
 [strategy.liquidity_sweep.BNB]
-oi_drop_pct  = 3.5
-funding_min  = 0.00003
-
-# TRX: slow accumulation + sharp pumps → lower OI threshold, tighter ATR
-# Pattern: gradual OI buildup then sudden flush before next leg up
-[strategy.liquidity_sweep.TRX]
-oi_drop_pct  = 3.0
+oi_drop_pct  = 7.0
+funding_min  = 0.0001
+confirm_body = 0.5
 atr_mult     = 2.0
 take_profit  = 5.0
-funding_min  = 0.00003
 
-# ── Parámetros: RSI Mean Reversion
-[strategy.rsi_reversion]
-rsi_period   = 14
-oversold     = 35
-exit_level   = 55
-ma_trend     = 200
+# TRX: 38.5% WR → extremely selective; TRX funding barely moves
+[strategy.liquidity_sweep.TRX]
+oi_drop_pct  = 6.0
+funding_min  = 0.00005
+confirm_body = 0.5
+atr_mult     = 1.5
 take_profit  = 4.0
-atr_mult     = 2.0
-atr_period   = 14
+
+# ── Parámetros: RSI Mean Reversion (v2 — with volume confirmation)
+# oversold tightened 35→30: fewer but higher-quality entries
+# vol_mult: require panic-selling volume spike on the dip candles
+[strategy.rsi_reversion]
+rsi_period    = 14
+oversold      = 30
+exit_level    = 55
+ma_trend      = 200
+take_profit   = 4.0
+atr_mult      = 2.0
+atr_period    = 14
+vol_mult      = 1.5
+vol_ma_period = 20
+vol_lookback  = 3
+
+# ── Parámetros: Funding Rate Flush
+# funding_pct_rank: funding must be in top X% of its 7-day history
+# vol_mult: max volume in flush window >= mult × 24h volume MA
+[strategy.funding_flush]
+oi_drop_pct        = 3.0
+oi_window          = 3
+funding_pct_rank   = 65.0
+funding_rank_window = 168
+confirm_body       = 0.3
+vol_mult           = 1.3
+vol_ma_period      = 24
+take_profit        = 5.0
+atr_mult           = 2.5
+atr_period         = 14
+ma_trend_1h        = 50
+ma_trend_1d        = 50
+
+# Per-symbol overrides for Funding Flush
+# SOL: needs higher funding threshold — its funding is noisier
+[strategy.funding_flush.SOL]
+funding_pct_rank = 70.0
+oi_drop_pct      = 4.0
+vol_mult         = 1.5
+take_profit      = 5.0
+atr_mult         = 2.0
+
+# ETH: slightly tighter to improve quality
+[strategy.funding_flush.ETH]
+funding_pct_rank = 68.0
+take_profit      = 5.0
+
+# BNB: conservative — weak historical edge
+[strategy.funding_flush.BNB]
+funding_pct_rank = 72.0
+oi_drop_pct      = 4.0
+vol_mult         = 1.5
+
+# TRX: very conservative — most noise
+[strategy.funding_flush.TRX]
+funding_pct_rank = 72.0
+oi_drop_pct      = 4.0
+vol_mult         = 1.8
 
 # ── Grid search
 [optimization]
