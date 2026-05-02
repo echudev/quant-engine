@@ -1,0 +1,31 @@
+# ===================================================================
+#  Stock Screener — Configuracion
+# ===================================================================
+
+[universe]
+source = "sp500"            # "sp500" | "custom"
+custom_tickers = []         # solo si source = "custom"
+
+[filters]
+market_cap_min       = 10_000_000_000   # 10B USD
+adv_min_usd          = 50_000_000        # 50M USD volumen promedio diario
+history_min_days     = 504               # ~2 anos
+momentum_min         = -0.35             # mom 12-1 minimo (anti falling knife)
+sma200_distance_min  = -0.30             # max % por debajo de SMA200
+
+[weights]
+quality      = 0.25
+valuation    = 0.20
+accumulation = 0.25
+momentum     = 0.20
+insider      = 0.10                  # placeholder, no implementado en MVP
+
+[output]
+top_n           = 30
+csv_path        = "results/screener_{ts}.csv"
+markdown_path   = "results/screener_{ts}.md"
+print_console   = true
+
+[execution]
+n_jobs   = 4         # paralelismo en .info / financials
+refresh  = false     # forzar re-download (ignorar cache)
