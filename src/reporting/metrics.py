@@ -51,11 +51,14 @@ def print_comparison(results: list) -> None:
     print(f"\n{'━'*72}")
     print(f"  COMPARISON")
     print(f"{'━'*72}")
-    print(f"  {'Strategy':<22} {'Symbol':<6} {'Return':>8} {'Sharpe':>7} "
-          f"{'MaxDD':>8} {'WR':>7} {'Trades':>7}")
-    print(f"  {'-'*68}")
+    print(f"  {'Strategy':<22} {'Symbol':<6} {'Return':>8} {'B&H':>8} "
+          f"{'Alpha':>8} {'Sharpe':>7} {'MaxDD':>8} {'WR':>7} {'Trades':>7}")
+    print(f"  {'-'*86}")
     for r in results:
+        bh    = r.get("bh_%", float("nan"))
+        alpha = r.get("alpha_%", float("nan"))
         print(f"  {r['name']:<22} {r['symbol']:<6} {r['return_%']:>7.1f}% "
+              f"{bh:>7.1f}% {alpha:>7.1f}% "
               f"{r['sharpe']:>7.2f} {r['max_dd_%']:>7.1f}% "
               f"{r['win_rate_%']:>6.1f}% {r['trades']:>7}")
     print(f"{'━'*72}\n")

@@ -22,6 +22,7 @@ def run_backtest(
     strategy: BaseStrategy,
     init_cash: float = 10_000,
     fees: float      = 0.001,
+    slippage: float  = 0.0005,
     timeframe: str   = "1h",
 ) -> vbt.Portfolio:
     """
@@ -41,9 +42,33 @@ def run_backtest(
         tp_stop   = strategy.params.take_profit / 100,
         init_cash = init_cash,
         fees      = fees,
-        size      = 1.0,
+        slippage  = slippage,
+        size      = np.inf,   # deploy all available cash per entry (vbt default)
         freq      = timeframe,
     )
+
+
+def buy_hold_metrics(df: pd.DataFrame, timeframe: str = "1h") -> dict:
+    """
+    Buy & hold benchmark over the exact backtested period.
+    Buys the close on the first bar, holds to the last bar.
+    Returns total return, Sharpe and max drawdown for fair comparison.
+    """
+    close = df["close"].dropna()
+    bh_return = (close.iloc[-1] / close.iloc[0] - 1) * 100
+
+    rets = close.pct_change().dropna()
+    ann = {"1h": 24 * 365, "4h": 6 * 365, "1d": 365}.get(timeframe, 24 * 365)
+    sharpe = (rets.mean() / rets.std() * (ann ** 0.5)) if rets.std() > 0 else float("nan")
+
+    cummax = close.cummax()
+    max_dd = ((close - cummax) / cummax).min() * 100
+
+    return {
+        "bh_return_%": round(bh_return, 2),
+        "bh_sharpe":   round(sharpe, 3),
+        "bh_max_dd_%": round(max_dd, 2),
+    }
 
 
 def extract_metrics(portfolio: vbt.Portfolio) -> dict:

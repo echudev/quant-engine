@@ -13,7 +13,8 @@
       "Bash(PYTHONIOENCODING=utf-8 PYTHONUNBUFFERED=1 uv run main_screener.py --top 50)",
       "Bash(tee results/screener_sp500_run.log)",
       "Bash(PYTHONIOENCODING=utf-8 PYTHONUNBUFFERED=1 uv run main_screener.py --top 30)",
-      "Bash(tee results/screener_v2_run.log)"
+      "Bash(tee results/screener_v2_run.log)",
+      "PowerShell(uv run *)"
     ]
   }
 }

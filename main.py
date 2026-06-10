@@ -15,7 +15,9 @@ from src.data.fetcher import (
 from src.strategies.liquidity_sweep import LiquiditySweepStrategy, LiquiditySweepParams
 from src.strategies.rsi_reversion import RSIReversionStrategy, RSIReversionParams
 from src.strategies.funding_flush import FundingFlushStrategy, FundingFlushParams
-from src.backtest.engine import run_backtest, extract_metrics, optimize_strategy, walk_forward
+from src.backtest.engine import (
+    run_backtest, extract_metrics, buy_hold_metrics, optimize_strategy, walk_forward
+)
 from src.reporting.metrics import print_report, print_comparison
 from src.reporting.plots import plot_equity_curves, plot_multi_symbol
 
@@ -143,6 +145,11 @@ if __name__ == "__main__":
               f"FR range: {df_bt['funding_rate'].min():.4f} → "
               f"{df_bt['funding_rate'].max():.4f}")
 
+        # ── Buy & Hold benchmark over the exact same period
+        bh = buy_hold_metrics(df_bt, timeframe=TIMEFRAME)
+        print(f"  Buy & Hold:  {bh['bh_return_%']:.1f}%  "
+              f"Sharpe: {bh['bh_sharpe']:.2f}  MaxDD: {bh['bh_max_dd_%']:.1f}%")
+
         # ── 4. Liquidity Sweep
         print(f"\n  ── Liquidity Sweep OI [{name}]")
         ls_params = build_ls_params(name)
@@ -152,7 +159,9 @@ if __name__ == "__main__":
 
         pf_ls = run_backtest(df_ls, ls_strat, INIT_CASH, timeframe=TIMEFRAME)
         r_ls  = extract_metrics(pf_ls)
-        r_ls.update({"name": "Liquidity Sweep", "symbol": name})
+        r_ls.update({"name": "Liquidity Sweep", "symbol": name,
+                     "bh_%": bh["bh_return_%"],
+                     "alpha_%": round(r_ls["return_%"] - bh["bh_return_%"], 2)})
         all_results.append(r_ls)
         all_pf_ls.append(pf_ls)
         all_labels.append(f"LS {name}")
@@ -171,7 +180,9 @@ if __name__ == "__main__":
 
         pf_rsi = run_backtest(df_rsi, rsi_strat, INIT_CASH, timeframe=TIMEFRAME)
         r_rsi  = extract_metrics(pf_rsi)
-        r_rsi.update({"name": "RSI Reversion", "symbol": name})
+        r_rsi.update({"name": "RSI Reversion", "symbol": name,
+                      "bh_%": bh["bh_return_%"],
+                      "alpha_%": round(r_rsi["return_%"] - bh["bh_return_%"], 2)})
         all_results.append(r_rsi)
         all_pf_rsi.append(pf_rsi)
 
@@ -187,7 +198,9 @@ if __name__ == "__main__":
 
         pf_ff = run_backtest(df_ff, ff_strat, INIT_CASH, timeframe=TIMEFRAME)
         r_ff  = extract_metrics(pf_ff)
-        r_ff.update({"name": "Funding Flush", "symbol": name})
+        r_ff.update({"name": "Funding Flush", "symbol": name,
+                     "bh_%": bh["bh_return_%"],
+                     "alpha_%": round(r_ff["return_%"] - bh["bh_return_%"], 2)})
         all_results.append(r_ff)
         all_pf_ff.append(pf_ff)
 
