@@ -46,7 +46,9 @@ def fetch_ohlcv(
     if cache_file.exists():
         df_cached = pd.read_parquet(cache_file)
         last_ts   = df_cached.index[-1]
-        since_ts  = int(last_ts.timestamp() * 1000) + 1
+        # Re-fetch the last cached candle: it may have been stored while the
+        # bar was still open (partial OHLCV). Dedup keep="last" replaces it.
+        since_ts  = int(last_ts.timestamp() * 1000)
         print(f"  [CACHE] {symbol} {timeframe}: {len(df_cached)} candles "
               f"(up to {last_ts.date()})")
     else:
@@ -78,6 +80,12 @@ def fetch_ohlcv(
     frames = [f for f in [df_cached, df_new] if f is not None]
     df = pd.concat(frames)
     df = df[~df.index.duplicated(keep="last")].sort_index()
+
+    # Drop the still-open candle (its OHLCV is partial until the bar closes)
+    tf_sec  = exchange.parse_timeframe(timeframe)
+    now_utc = pd.Timestamp.now(tz="UTC")
+    df = df[df.index + pd.Timedelta(seconds=tf_sec) <= now_utc]
+
     df.to_parquet(cache_file)
     return df
 

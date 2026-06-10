@@ -186,3 +186,42 @@ vol_mult         = 1.8
 min_trades   = 20
 max_drawdown = -30.0    # descartar si DD peor que esto
 min_win_rate = 45.0
+
+# ===================================================================
+#  EXPERIMENTO: gradiente de capitalización — Liquidity Sweep OI
+#  Hipótesis: el edge OOS correlaciona inversamente con el tamaño
+#  del par (rank por open interest en USD).
+#  Lanzar con: python -m experiments.cap_gradient
+# ===================================================================
+[experiment.cap_gradient]
+top_n              = 20          # universo: top N perpetuos USDT por OI en USD
+min_history_months = 18          # historia mínima requerida (OHLCV + OI)
+since_date         = "2023-01-01"  # inicio común (símbolos listados después arrancan en su listing)
+max_missing_pct    = 2.0         # excluir si faltan más de este % de velas OHLCV
+max_oi_missing_pct = 5.0         # excluir si la cobertura de OI es menor a 100-X%
+gap_alert_candles  = 6           # registrar gaps mayores a N velas consecutivas
+
+# Costos pesimistas escalonados por rank de OI (round-trip = 2x por entrada+salida)
+# tier 1 (ranks 1-5)  = costos base; tier 2 (6-12) = 1.5x; tier 3 (13-20) = 2.5x
+base_fees      = 0.001           # taker fee por lado (= default histórico del motor)
+base_slippage  = 0.0005          # slippage estimado por lado
+tier_max_rank  = [5, 12, 20]
+tier_cost_mult = [1.0, 1.5, 2.5]
+
+# Walk-forward — idéntico para todos los símbolos (misma config que BTC/ETH)
+train_months      = 12
+test_months       = 6
+min_trades        = 5            # mínimo de trades in-sample por combo
+low_sample_trades = 15           # ventanas OOS con menos trades se marcan low_sample
+seed              = 42
+
+# Stablecoins y sintéticos a excluir del universo (baseCoin de Bybit)
+exclude_bases = ["USDC", "USDE", "DAI", "TUSD", "FDUSD", "BUSD", "USTC", "USDD", "PYUSD", "USD1", "XUSD"]
+
+# Grilla unificada de WF (unión de las grillas validadas en BTC y ETH)
+# 6 × 4 × 3 × 3 = 216 combinaciones por ventana
+[experiment.cap_gradient.grid]
+oi_drop_pct = [0.5, 1.0, 1.5, 2.5, 4.0, 6.0]
+funding_min = [0.0, 0.00002, 0.00005, 0.0001]
+take_profit = [4.0, 6.0, 8.0]
+atr_mult    = [2.0, 2.5, 3.0]

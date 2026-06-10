@@ -99,6 +99,8 @@ def _eval_combo(
     max_dd: float,
     init_cash: float,
     timeframe: str,
+    fees: float     = 0.001,
+    slippage: float = 0.0005,
 ) -> Optional[dict]:
     """
     Evaluate a single parameter combination.
@@ -115,7 +117,8 @@ def _eval_combo(
         return None
 
     try:
-        pf     = run_backtest(df_sig, strategy, init_cash, timeframe=timeframe)
+        pf     = run_backtest(df_sig, strategy, init_cash,
+                              fees=fees, slippage=slippage, timeframe=timeframe)
         stats  = pf.stats()
         trades = stats.get("Total Trades", 0)
         wr     = stats.get("Win Rate [%]", 0)
@@ -149,6 +152,8 @@ def optimize_strategy(
     timeframe: str   = "1h",
     top_n: int       = 10,
     n_jobs: int      = -1,
+    fees: float      = 0.001,
+    slippage: float  = 0.0005,
 ) -> pd.DataFrame:
     """
     Parallelized grid search for any strategy.
@@ -177,6 +182,7 @@ def optimize_strategy(
         delayed(_eval_combo)(
             combo, keys, base_params, strategy_class,
             df, min_trades, min_wr, max_dd, init_cash, timeframe,
+            fees, slippage,
         )
         for combo in combos
     )
@@ -209,6 +215,10 @@ def _eval_window(
     min_trades: int,
     init_cash: float,
     timeframe: str,
+    fees: float         = 0.001,
+    slippage: float     = 0.0005,
+    train_max_dd: float = -35.0,
+    train_min_wr: float = 40.0,
 ) -> Optional[dict]:
     """
     Evaluate a single walk-forward window.
@@ -249,13 +259,14 @@ def _eval_window(
         if df_sig["entry"].sum() < min_trades:
             continue
         try:
-            pf  = run_backtest(df_sig, strategy, init_cash, timeframe=timeframe)
+            pf  = run_backtest(df_sig, strategy, init_cash,
+                               fees=fees, slippage=slippage, timeframe=timeframe)
             sh  = pf.sharpe_ratio()
             dd  = pf.max_drawdown() * 100
             wr  = pf.stats().get("Win Rate [%]", 0)
             trades = pf.stats().get("Total Trades", 0)
 
-            if trades < min_trades or dd < -35 or wr < 40:
+            if trades < min_trades or dd < train_max_dd or wr < train_min_wr:
                 continue
             if sh > best_sharpe:
                 best_sharpe = sh
@@ -271,7 +282,8 @@ def _eval_window(
     df_test_p = strategy.prepare(df_test)
 
     try:
-        pf_test = run_backtest(df_test_p, strategy, init_cash, timeframe=timeframe)
+        pf_test = run_backtest(df_test_p, strategy, init_cash,
+                               fees=fees, slippage=slippage, timeframe=timeframe)
         m = extract_metrics(pf_test)
         return {
             "window":      window_n,
@@ -279,6 +291,7 @@ def _eval_window(
             "train_end":   train_end.date(),
             "test_start":  train_end.date(),
             "test_end":    test_end.date(),
+            "sharpe_is":   round(float(best_sharpe), 3),
             "best_params": str({k: getattr(best_params, k) for k in param_grid}),
             **m,
         }
@@ -297,6 +310,10 @@ def walk_forward(
     init_cash: float  = 10_000,
     timeframe: str    = "1h",
     n_jobs: int       = -1,
+    fees: float         = 0.001,
+    slippage: float     = 0.0005,
+    train_max_dd: float = -35.0,
+    train_min_wr: float = 40.0,
 ) -> pd.DataFrame:
     """
     Parallelized walk-forward validation.
@@ -347,6 +364,7 @@ def walk_forward(
             n, cursor, train_end, test_end,
             df, strategy_class, base_params, param_grid,
             min_trades, init_cash, timeframe,
+            fees, slippage, train_max_dd, train_min_wr,
         )
         for n, cursor, train_end, test_end in windows
     )
@@ -355,9 +373,12 @@ def walk_forward(
 
     if not results:
         print("  [WF] No valid windows found.")
-        return pd.DataFrame()
+        empty = pd.DataFrame()
+        empty.attrs["n_windows_total"] = len(windows)
+        return empty
 
     df_wf = pd.DataFrame(results).sort_values("window")
+    df_wf.attrs["n_windows_total"] = len(windows)
 
     print(f"\n  [WF] Results ({len(results)}/{len(windows)} windows valid):")
     cols = ["window", "test_start", "test_end",

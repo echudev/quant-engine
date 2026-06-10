@@ -62,6 +62,11 @@ class BaseStrategy(ABC):
         return tr.rolling(period).mean()
 
     def atr_sl_series(self, df: pd.DataFrame) -> pd.Series:
-        """Dynamic stop-loss as fraction of price: atr_mult × ATR / close."""
+        """Dynamic stop-loss as fraction of price: atr_mult × ATR / close.
+
+        Leading bars (ATR warm-up) stay NaN instead of backfilling future
+        ATR values; no entry can fire there anyway (other indicators are
+        also warming up).
+        """
         atr = self.compute_atr(df, self.params.atr_period)
-        return (self.params.atr_mult * atr / df["close"]).bfill()
+        return (self.params.atr_mult * atr / df["close"]).ffill()

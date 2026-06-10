@@ -12,6 +12,7 @@ from pathlib import Path
 from src.data.fetcher import (
     fetch_ohlcv, fetch_open_interest, fetch_funding_rate, merge_derivatives
 )
+from src.data.preparation import build_daily_trend, apply_daily_trend
 from src.strategies.liquidity_sweep import LiquiditySweepStrategy, LiquiditySweepParams
 from src.strategies.rsi_reversion import RSIReversionStrategy, RSIReversionParams
 from src.strategies.funding_flush import FundingFlushStrategy, FundingFlushParams
@@ -72,27 +73,6 @@ def build_ff_params(symbol_name: str) -> FundingFlushParams:
     override = FF_CFG.get(symbol_name, {})
     base.update(override)
     return FundingFlushParams(**base)
-
-
-# ──────────────────────────────────────────────────────────────────
-#  DAILY TREND — shared across all symbols
-# ──────────────────────────────────────────────────────────────────
-
-def build_daily_trend(df_daily: pd.DataFrame, ma_period: int = 50) -> pd.Series:
-    ma    = df_daily["close"].rolling(ma_period).mean()
-    trend = (df_daily["close"] > ma)
-    trend.index = trend.index.normalize()
-    return trend
-
-
-def apply_daily_trend(df: pd.DataFrame, daily_trend: pd.Series) -> pd.DataFrame:
-    df = df.copy()
-    if not isinstance(df.index, pd.DatetimeIndex):
-        df.index = pd.to_datetime(df.index, utc=True)
-    df["trend_daily"] = daily_trend.reindex(
-        df.index.normalize(), method="ffill"
-    ).values
-    return df
 
 
 # ──────────────────────────────────────────────────────────────────
