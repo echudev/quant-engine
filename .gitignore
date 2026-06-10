@@ -1,7 +1,8 @@
 # ── Datos y caché (pueden ser GB, no van al repo)
-data/
-plots/
-results/
+# Anclados a la raíz: "data/" sin anclar también ignoraba src/data/ (código)
+/data/
+/plots/
+/results/
 
 # ── Credenciales
 .env
